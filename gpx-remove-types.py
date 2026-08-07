@@ -1,3 +1,10 @@
+"""Remove types from gpx files, for WikiVoyage -> OSMand imports.
+
+This does some pre-processing of gpx files downloaded from WikiVoyage
+to make it more convenient to import to OSMand.  This removes types
+(which become categories in OSMand favorites which wasn't convenient)
+and adds relevant icons.
+"""
 import argparse
 import re
 import sys
@@ -21,9 +28,9 @@ def main():
             new = et
             newroot  = et.getroot()
         root = et.getroot()
-        
+
         ns = {'gpx': gpxns}
-        
+
         for wpt in et.findall('.//gpx:wpt', ns):
             e_type = wpt.find('gpx:type', ns)
             if e_type is not None:
@@ -31,9 +38,9 @@ def main():
                 if args.wikivoyage and any_in(['sleep', 'drink'], e_type.text.lower()):
                     root.remove(wpt)
                     continue
-                    
-                
-    
+
+
+
                 e_name = wpt.find('gpx:name', ns)
                 if args.wikivoyage and (m := re.match(r'\d+\-(.*)', e_type.text)):
                     type = m.group(1)
@@ -44,7 +51,7 @@ def main():
                     pass
                 else:
                     extensions = ET.SubElement(wpt, f'{{{gpxns}}}extensions')
-                    
+
                 # icons don't currently work
                 if 'eat'   in type: icon = ET.SubElement(extensions, f'{{{osmandns}}}icon') ;  icon.text = 'restaurants'
                 elif 'see' in type: icon = ET.SubElement(extensions, f'{{{osmandns}}}icon') ;  icon.text = 'camera'
