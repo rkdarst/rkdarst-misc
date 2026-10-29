@@ -1,15 +1,21 @@
-# Create ~/.config/systemd/user/ssh-tunnel-button.service with:
+# Create ~/.config/systemd/user/ssh-tunnel-button@.service with:
+#
+# Add variable file at  ~/.config/ssh-tunnel-button/A.conf
+#   SSH_HOST=username@host
+#   SSH_PORT=port_number
+#
 # systemctl --user daemon-reload
-# systemctl --user enable --now ssh-tunnel-button.service
+# systemctl --user enable --now ssh-tunnel-button.service@A
 
 [Unit]
-Description=SSH tunnel top-bar indicator (NAME)
+Description=SSH tunnel top-bar indicator (%i)
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/git/rkdarst-misc/ssh-tunnel-button/ssh-tunnel-button.py HOST SOCKS_PORT
+EnvironmentFile=%h/.config/ssh-tunnel-button/%i.conf
+ExecStart=/usr/bin/python3 %h/git/rkdarst-misc/ssh-tunnel-button/ssh-tunnel-button.py --label=%i -- ${SSH_HOST} ${SSH_PORT}
 Restart=always
 RestartSec=5
 StandardOutput=journal
