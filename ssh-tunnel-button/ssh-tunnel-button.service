@@ -9,7 +9,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/git/rkdarst-misc/ssh-tunnel-button.py HOST SOCKS_PORT
+ExecStart=/usr/bin/python3 %h/git/rkdarst-misc/ssh-tunnel-button/ssh-tunnel-button.py HOST SOCKS_PORT
 Restart=always
 RestartSec=5
 StandardOutput=journal
