@@ -1,0 +1,19 @@
+# Create ~/.config/systemd/user/ssh-tunnel-button.service with:
+# systemctl --user daemon-reload
+# systemctl --user enable --now ssh-tunnel-button.service
+
+[Unit]
+Description=SSH tunnel top-bar indicator (NAME)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/git/rkdarst-misc/ssh-tunnel-button.py HOST SOCKS_PORT
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target
