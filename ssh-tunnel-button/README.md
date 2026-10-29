@@ -3,8 +3,8 @@
 This is a top-bar (app indicator) icon that can start a SSH process
 for you.  The color (blue, orange, green) for (disconnected,
 connecting, connected) indicates the state.  It can be used for
-keeping persistent SSH tunnels open.
-
+opening SSH tunnels on your request, but doesn't do it without your
+action.  It is run by systemd.
 
 
 ## Below this line may be machine-genarated
@@ -32,6 +32,10 @@ create `~/.config/ssh-tunnel-button/NAME.conf` with `SSH_HOST=` and
 
     systemctl --user daemon-reload
     systemctl --user enable --now ssh-tunnel-button@NAME.service
+
+Just start for this session:
+
+    systemctl --user start ssh-tunnel-button@A.service
 
 The unit starts the tray button only; the tunnel itself is started and
 stopped by clicking the icon. Unexpected ssh exits and port-in-use
