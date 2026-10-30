@@ -147,12 +147,21 @@ STATE_ICONS = {
 # actually listening (authentication succeeded and forwards are set up).
 CONNECTED_MARKER = "local forwarding listening"
 CONNECT_PROBE_DELAY = 15  # Seconds; port-probe fallback if marker unseen.
+# A tunnel that dies young (never connected, or within this many seconds
+# after connecting) is a problem worth a notification; one that was
+# established longer than that exits routinely (network churn, laptop
+# sleep, server restart) and just goes back to blue silently.
+CONNECTED_NOTIFY_MIN_SECONDS = 30
+# How much recent ssh stderr to keep around for failure notifications.
+STDERR_TAIL_CHARS = 400
 
 process = None
 state = STATE_IDLE
 stderr_buffer = ""
 stderr_watch_id = None
 connecting_since = None
+connected_since = None
+stderr_tail = ""
 quitting = False
 
 
@@ -177,6 +186,7 @@ def mirror_text(text):
 def drain_stderr(proc):
     # Mirror any final ssh output (e.g. "Connection to ... closed.") that
     # arrived between the last io-watch read and process exit.
+    global stderr_tail
     try:
         fd = proc.stderr.fileno()
     except (OSError, ValueError, AttributeError):
@@ -188,7 +198,29 @@ def drain_stderr(proc):
             break
         if not data:
             break
-        mirror_text(data.decode(errors="replace"))
+        text = data.decode(errors="replace")
+        mirror_text(text)
+        stderr_tail = (stderr_tail + text)[-STDERR_TAIL_CHARS:]
+
+
+_GENERIC_CLOSE_ECHO_RE = re.compile(r"^Connection closed by \S+ port \d+$")
+
+
+def last_ssh_error_line():
+    # Most recent non-empty line of ssh's stderr, for failure notifications.
+    # OpenSSH prints its fatal error just before exiting, so the last line
+    # is usually the diagnosis (refused / DNS / Permission denied / ...).
+    # One known exception: "Connection closed by HOST port N" is a generic
+    # echo that can trail the real reason (e.g.
+    # "kex_exchange_identification: Connection closed by remote host",
+    # typical of fail2ban or a non-SSH service on the port) -- prefer the
+    # line above it in that case.
+    lines = [line.strip() for line in stderr_tail.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    if len(lines) > 1 and _GENERIC_CLOSE_ECHO_RE.match(lines[-1]):
+        return lines[-2][:200]
+    return lines[-1][:200]
 
 
 # --- Desktop notifications (org.freedesktop.Notifications via D-Bus) ------
@@ -300,7 +332,7 @@ def update_ui():
 
 
 def on_stderr(fd, _condition):
-    global stderr_buffer, state, stderr_watch_id
+    global stderr_buffer, stderr_tail, state, stderr_watch_id, connected_since
     try:
         data = os.read(fd, 4096)
     except OSError:
@@ -309,10 +341,12 @@ def on_stderr(fd, _condition):
         text = data.decode(errors="replace")
         mirror_text(text)
         stderr_buffer += text
+        stderr_tail = (stderr_tail + text)[-STDERR_TAIL_CHARS:]
         *lines, stderr_buffer = stderr_buffer.split("\n")
         for line in lines:
             if state == STATE_CONNECTING and CONNECTED_MARKER in line.lower():
                 state = STATE_CONNECTED
+                connected_since = time.monotonic()
                 log("SSH tunnel connected (SOCKS forward listening)")
                 update_ui()
         return True  # Keep reading stderr.
@@ -322,8 +356,9 @@ def on_stderr(fd, _condition):
 
 
 def watch_stderr(proc):
-    global stderr_buffer, stderr_watch_id
+    global stderr_buffer, stderr_tail, stderr_watch_id
     stderr_buffer = ""
+    stderr_tail = ""
     if stderr_watch_id is not None:
         GLib.source_remove(stderr_watch_id)
     stderr_watch_id = GLib.io_add_watch(
@@ -341,7 +376,7 @@ def unwatch_stderr():
 
 
 def start_tunnel(_item):
-    global process, state, connecting_since
+    global process, state, connecting_since, connected_since
     if running():
         return
 
@@ -358,22 +393,25 @@ def start_tunnel(_item):
         notify("Could not start SSH", str(error))
         process = None
         state = STATE_IDLE
+        connected_since = None
         update_ui()
         return
 
     log(f"Starting SSH tunnel: ssh -D {FORWARD} {SSH_TARGET}")
     state = STATE_CONNECTING
     connecting_since = time.monotonic()
+    connected_since = None
     watch_stderr(process)
     update_ui()
 
 
 def stop_tunnel(_item=None):
-    global process, state, connecting_since
+    global process, state, connecting_since, connected_since
     unwatch_stderr()
     if process is None:
         state = STATE_IDLE
         connecting_since = None
+        connected_since = None
         update_ui()
         return
 
@@ -386,6 +424,7 @@ def stop_tunnel(_item=None):
         process = None
         state = STATE_IDLE
         connecting_since = None
+        connected_since = None
         update_ui()
         return
 
@@ -404,6 +443,7 @@ def stop_tunnel(_item=None):
     process = None
     state = STATE_IDLE
     connecting_since = None
+    connected_since = None
     update_ui()
 
 
@@ -417,20 +457,33 @@ def toggle_tunnel(_item):
 
 
 def poll_process():
-    global process, state, connecting_since
+    global process, state, connecting_since, connected_since
     if process is not None and not running():
         unwatch_stderr()
         drain_stderr(process)
         if process.stderr:
             process.stderr.close()
-        notify(
-            "SSH tunnel failed",
-            f"ssh exited unexpectedly (code {process.returncode}). "
-            "See journalctl --user -u 'ssh-tunnel-button@*'",
+        # A tunnel that had been established for a while exits routinely
+        # (network churn, laptop sleep, server restart): go back to blue
+        # without a popup. Only "young" deaths are worth interrupting for.
+        established = (
+            state == STATE_CONNECTED
+            and connected_since is not None
+            and time.monotonic() - connected_since >= CONNECTED_NOTIFY_MIN_SECONDS
         )
+        if established:
+            log(f"SSH tunnel exited (code {process.returncode})")
+        else:
+            reason = last_ssh_error_line()
+            body = f"ssh exited unexpectedly (code {process.returncode})."
+            if reason:
+                body += f" Last ssh output: {reason}"
+            body += " See journalctl --user -u 'ssh-tunnel-button@*'"
+            notify("SSH tunnel failed", body)
         process = None
         state = STATE_IDLE
         connecting_since = None
+        connected_since = None
         update_ui()
     elif process is not None and state == STATE_CONNECTING:
         # Fallback for ssh builds that never print the "connected" marker:
@@ -443,6 +496,7 @@ def poll_process():
             and port_in_use(FORWARD)
         ):
             state = STATE_CONNECTED
+            connected_since = time.monotonic()
             connecting_since = None
             log("SSH tunnel connected (port probe; marker not seen in ssh output)")
             update_ui()

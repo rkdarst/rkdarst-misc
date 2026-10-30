@@ -345,6 +345,67 @@ in_use_notes = [n for n in FakeGio.notifications if "already in use" in str(n)]
 check("notifications are throttled", len(in_use_notes) == 1)
 stb.port_in_use = orig_port_in_use
 
+# 6e. Death of an established tunnel (up longer than
+# CONNECTED_NOTIFY_MIN_SECONDS) is normal churn: silent, just back to blue.
+fake6 = FakeProc()
+stb.subprocess.Popen = lambda *a, **k: fake6
+stb.start_tunnel(None)
+stb.state = stb.STATE_CONNECTED
+stb.connected_since = time.monotonic() - stb.CONNECTED_NOTIFY_MIN_SECONDS - 1
+fake6._alive = False
+fake6.returncode = 255
+notes_before = len(FakeGio.notifications)
+silencap = io.StringIO()
+sys.stderr = silencap
+stb.poll_process()
+sys.stderr = real_stderr
+check("established-tunnel death is silent", len(FakeGio.notifications) == notes_before)
+check("established-tunnel death reverts to IDLE",
+      stb.process is None and stb.state == stb.STATE_IDLE)
+check("established-tunnel death still logged",
+      "SSH tunnel exited (code 255)" in silencap.getvalue())
+check("established-tunnel death clears connected_since",
+      stb.connected_since is None)
+
+# 6f. A tunnel that dies young (here: 5 s after connecting) still notifies,
+# and the body carries the last line of ssh's stderr.
+stb.stderr_tail = "debug1: Connection to example.com closed.\nConnection refused\n"
+check("last ssh stderr line extracted", stb.last_ssh_error_line() == "Connection refused")
+stb.stderr_tail = (
+    "kex_exchange_identification: Connection closed by remote host\n"
+    "Connection closed by 127.0.0.1 port 22\n"
+)
+check("generic close echo skipped for the real reason",
+      stb.last_ssh_error_line() == "kex_exchange_identification: Connection closed by remote host")
+stb.stderr_tail = (
+    "debug1: Authentication succeeded (publickey).\n"
+    "Connection to example.com closed by remote host.\n"
+)
+check("clean-close echo is not mistaken for a kex echo",
+      stb.last_ssh_error_line() == "Connection to example.com closed by remote host.")
+stb._last_notify_times.clear()
+notes_before = len(FakeGio.notifications)
+fake7 = FakeProc()
+stb.subprocess.Popen = lambda *a, **k: fake7
+stb.start_tunnel(None)
+stb.state = stb.STATE_CONNECTED
+stb.connected_since = time.monotonic() - 5
+stb.stderr_tail = "debug1: Authentications that can continue: publickey\n"
+fake7._alive = False
+fake7.returncode = 255
+youngcap = io.StringIO()
+sys.stderr = youngcap
+stb.poll_process()
+sys.stderr = real_stderr
+young_notes = FakeGio.notifications[notes_before:]
+check("young-tunnel death notifies", any(
+    "SSH tunnel failed" in str(n) for n in young_notes))
+check("young-tunnel notification carries ssh error", any(
+    "Authentications that can continue" in str(n) for n in young_notes))
+check("young-tunnel death reverts to IDLE",
+      stb.process is None and stb.state == stb.STATE_IDLE)
+stb.subprocess.Popen = lambda *a, **k: fake  # restore section-7 expectations
+
 # 7. start failure path (OSError) keeps things consistent, and notifies.
 def boom(*a, **k):
     raise OSError("no ssh binary")
