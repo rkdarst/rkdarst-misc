@@ -5,7 +5,7 @@
 #   SSH_PORT=port_number
 #
 # systemctl --user daemon-reload
-# systemctl --user enable --now ssh-tunnel-button.service@A
+# systemctl --user enable --now ssh-tunnel-button@A.service
 
 [Unit]
 Description=SSH tunnel top-bar indicator (%i)

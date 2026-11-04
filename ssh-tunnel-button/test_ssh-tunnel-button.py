@@ -406,6 +406,33 @@ check("young-tunnel death reverts to IDLE",
       stb.process is None and stb.state == stb.STATE_IDLE)
 stb.subprocess.Popen = lambda *a, **k: fake  # restore section-7 expectations
 
+# 6g. Hostile bytes in ssh stderr must not reach the notification body
+# verbatim: markup is escaped (daemons may render it) and control
+# characters (ANSI escapes) are dropped.
+check("markup escaped for notifications",
+      stb._sanitize_notification_text("<b>bold</b> & <i>italic</i>")
+      == "&lt;b&gt;bold&lt;/b&gt; &amp; &lt;i&gt;italic&lt;/i&gt;")
+check("control characters dropped for notifications",
+      stb._sanitize_notification_text("\x1b[31mred\x1b[0m") == "[31mred[0m")
+stb._last_notify_times.clear()
+notes_before = len(FakeGio.notifications)
+fake8 = FakeProc()
+stb.subprocess.Popen = lambda *a, **k: fake8
+stb.start_tunnel(None)
+stb.state = stb.STATE_CONNECTED
+stb.connected_since = time.monotonic() - 5
+stb.stderr_tail = "\x1b[31m<a href='http://evil.example'>Broken pipe</a>\x1b[0m\n"
+fake8._alive = False
+fake8.returncode = 255
+sys.stderr = io.StringIO()
+stb.poll_process()
+sys.stderr = real_stderr
+hostile_notes = FakeGio.notifications[notes_before:]
+check("end-to-end: reason markup escaped", any(
+    "<a href" not in str(n) and "&lt;a href" in str(n) for n in hostile_notes))
+check("end-to-end: reason control chars dropped", any(
+    "\x1b" not in str(n) for n in hostile_notes))
+
 # 7. start failure path (OSError) keeps things consistent, and notifies.
 def boom(*a, **k):
     raise OSError("no ssh binary")

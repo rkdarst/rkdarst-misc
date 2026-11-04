@@ -223,6 +223,15 @@ def last_ssh_error_line():
     return lines[-1][:200]
 
 
+def _sanitize_notification_text(text):
+    # ssh stderr can quote server-controlled strings (banners, kex
+    # errors). Notification bodies may be interpreted as markup by the
+    # desktop daemon, so escape markup and drop control characters
+    # (ANSI escapes, etc.) to keep hostile bytes cosmetic-only.
+    text = "".join(ch for ch in text if ch.isprintable())
+    return escape(text)
+
+
 # --- Desktop notifications (org.freedesktop.Notifications via D-Bus) ------
 
 NOTIFY_DBUS_TIMEOUT_MS = 2000
@@ -474,7 +483,10 @@ def poll_process():
         if established:
             log(f"SSH tunnel exited (code {process.returncode})")
         else:
-            reason = last_ssh_error_line()
+            # The reason line can quote server-controlled strings (banner,
+            # kex errors); the notification body may be rendered as markup,
+            # so escape it and drop control characters before showing it.
+            reason = _sanitize_notification_text(last_ssh_error_line())
             body = f"ssh exited unexpectedly (code {process.returncode})."
             if reason:
                 body += f" Last ssh output: {reason}"
