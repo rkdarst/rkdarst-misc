@@ -2,7 +2,7 @@
 #
 # Add variable file at  ~/.config/ssh-tunnel-button/A.conf
 #   SSH_HOST=username@host
-#   SSH_PORT=port_number
+#   SOCKS_PORT=port_number
 #
 # systemctl --user daemon-reload
 # systemctl --user enable --now ssh-tunnel-button@A.service
@@ -15,7 +15,7 @@ PartOf=graphical-session.target
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/ssh-tunnel-button/%i.conf
-ExecStart=/usr/bin/python3 %h/git/rkdarst-misc/ssh-tunnel-button/ssh-tunnel-button.py --label=%i -- ${SSH_HOST} ${SSH_PORT}
+ExecStart=/usr/bin/python3 %h/git/rkdarst-misc/ssh-tunnel-button/ssh-tunnel-button.py --label=%i -- ${SSH_HOST} ${SOCKS_PORT}
 Restart=always
 RestartSec=5
 StandardOutput=journal
